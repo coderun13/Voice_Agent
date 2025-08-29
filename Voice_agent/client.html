@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Voice Agent – Realtime (AssemblyAI + Gemini + Murf)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; }
+    .connection-indicator{ width:12px;height:12px;border-radius:999px;display:inline-block;margin-right:8px }
+    .connected{ background:#10b981; box-shadow:0 0 8px #10b981 }
+    .disconnected{ background:#ef4444 }
+    .transcription-area{ max-height: 320px; overflow-y:auto }
+    .llm-area{ max-height: 320px; overflow-y:auto }
+    .pulse{ animation:pulse 1.5s infinite }
+    @keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.4} }
+    .chat-bubble{ border-radius: 12px; padding: 12px; margin-bottom: 10px }
+    .user{ background: #e0f2fe }
+    .assistant{ background:#dcfce7 }
+    .system{ background:#f3f4f6; font-size:.9rem }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-indigo-50 to-blue-50 min-h-screen py-8">
+  <div class="container mx-auto max-w-6xl bg-white/80 backdrop-blur rounded-2xl shadow-xl p-6">
+    <header class="mb-6 text-center">
+      <h1 class="text-3xl font-bold text-indigo-700">Conversational AI Agent </h1>
+      <p class="text-gray-600">Live transcription to Gemini response with Murf TTS streaming</p>
+    </header>
+
+    <section class="mb-4 flex items-center justify-between bg-gray-50 border rounded-xl p-4">
+      <div id="connStatus" class="text-sm font-medium flex items-center gap-2">
+        <span id="connDot" class="connection-indicator disconnected"></span>
+        <span id="connText">Disconnected</span>
+      </div>
+      <div class="flex gap-2">
+        <button id="btnConnect" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold">Connect</button>
+        <button id="btnStart" class="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white font-semibold" disabled>Start Mic</button>
+        <button id="btnStop" class="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold" disabled>Stop Mic</button>
+        <button id="btnHistory" class="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-semibold" disabled>Get History</button>
+        <button id="btnClear" class="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold">Clear</button>
+      </div>
+    </section>
+
+    <section class="grid md:grid-cols-2 gap-6 mb-6">
+      <div class="border rounded-xl p-4 bg-blue-50">
+        <h3 class="font-semibold text-blue-700 mb-2">Live Transcription</h3>
+        <div id="partial" class="italic text-blue-600 min-h-[24px]">(waiting for speech…)</div>
+        <div class="mt-4 transcription-area" id="finals"></div>
+      </div>
+      <div class="border rounded-xl p-4 bg-green-50">
+        <h3 class="font-semibold text-green-700 mb-2">AI Response</h3>
+        <div id="llmStatus" class="text-green-600 text-sm">Idle</div>
+        <pre id="llm" class="mt-2 whitespace-pre-wrap llm-area text-gray-800"></pre>
+      </div>
+    </section>
+
+    <section class="border rounded-xl p-4 bg-purple-50 mb-4">
+      <div class="flex items-center justify-between">
+        <h3 class="font-semibold text-purple-700">TTS Streaming (Playback)</h3>
+        <div id="ttsInfo" class="text-xs text-purple-600">Chunks: 0 | Buffer: 0 | Playing: No</div>
+      </div>
+      <div id="audioStatus" class="mt-2 text-purple-700">Ready</div>
+      <div class="w-full bg-purple-200 rounded-full h-2 mt-3">
+        <div id="prog" class="h-2 bg-purple-600 rounded-full" style="width:0%"></div>
+      </div>
+    </section>
+
+    <section>
+      <h3 class="font-semibold text-gray-700 mb-2">Debug</h3>
+      <div id="log" class="text-xs bg-gray-50 border rounded-xl p-3 h-40 overflow-y-auto font-mono"></div>
+    </section>
+  </div>
+
+  <script>
+    // ---------------------------------------------
+    // Utility – Debug log
+    // ---------------------------------------------
+    const logEl = document.getElementById('log');
+    function log(msg){
+      const line = document.createElement('div');
+      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      logEl.appendChild(line); logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // ---------------------------------------------
+    // Elements
+    // ---------------------------------------------
+    const btnConnect = document.getElementById('btnConnect');
+    const btnStart = document.getElementById('btnStart');
+    const btnStop = document.getElementById('btnStop');
+    const btnHistory = document.getElementById('btnHistory');
+    const btnClear = document.getElementById('btnClear');
+    const partialEl = document.getElementById('partial');
+    const finalsEl = document.getElementById('finals');
+    const llmEl = document.getElementById('llm');
+    const llmStatusEl = document.getElementById('llmStatus');
+    const connDot = document.getElementById('connDot');
+    const connText = document.getElementById('connText');
+    const audioStatusEl = document.getElementById('audioStatus');
+    const ttsInfoEl = document.getElementById('ttsInfo');
+    const progEl = document.getElementById('prog');
+
+    // ---------------------------------------------
+    // WebSocket
+    // ---------------------------------------------
+    let ws = null;
+
+    function setConnected(v){
+      if(v){ connDot.classList.remove('disconnected'); connDot.classList.add('connected'); connText.textContent = 'Connected'; }
+      else { connDot.classList.remove('connected'); connDot.classList.add('disconnected'); connText.textContent = 'Disconnected'; }
+      btnStart.disabled = !v; btnHistory.disabled = !v;
+    }
+
+    btnConnect.addEventListener('click', () => {
+      if(ws && ws.readyState === WebSocket.OPEN){ log('Already connected'); return; }
+      ws = new WebSocket('ws://localhost:8765');
+
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => { setConnected(true); log('WebSocket connected'); };
+      ws.onclose = () => { setConnected(false); log('WebSocket closed'); };
+      ws.onerror = (e) => { log('WebSocket error'); console.error(e); };
+
+      ws.onmessage = (event) => {
+        try{
+          const msg = JSON.parse(event.data);
+          const type = msg.message_type;
+          switch(type){
+            case 'WelcomeMessage':
+              log('Welcome received');
+              break;
+            case 'PartialTranscript':
+              partialEl.textContent = msg.text || '';
+              break;
+            case 'FinalTranscript':
+              partialEl.textContent = '';
+              if(msg.text){
+                appendBubble('user', msg.text);
+              }
+              break;
+            case 'LLMStart':
+              llmStatusEl.textContent = 'Generating…';
+              break;
+            case 'LLMChunk':
+              llmEl.textContent += (msg.text || '');
+              break;
+            case 'LLMComplete':
+              llmStatusEl.textContent = 'Complete';
+              break;
+            case 'LLMError':
+              llmStatusEl.textContent = 'Error: ' + (msg.error||'');
+              break;
+            case 'TTSStart':
+              audioStatusEl.textContent = 'TTS: starting…';
+              break;
+            case 'TTSChunk':
+              if(msg.audio_chunk){
+                tts.addChunk(msg.audio_chunk);
+              }
+              break;
+            case 'TTSComplete':
+              audioStatusEl.textContent = 'TTS: complete';
+              break;
+            case 'TTSError':
+              audioStatusEl.textContent = 'TTS error: ' + (msg.error||'');
+              break;
+            case 'ChatHistory':
+              renderHistory(msg.history || []);
+              break;
+            default:
+              log('Unknown message: ' + type);
+          }
+        }catch(e){
+          log('Non-JSON message');
+        }
+      };
+    });
+
+    // ---------------------------------------------
+    // Chat helpers
+    // ---------------------------------------------
+    function appendBubble(role, text){
+      const div = document.createElement('div');
+      div.className = 'chat-bubble ' + (role === 'user' ? 'user' : role === 'assistant' ? 'assistant' : 'system');
+      div.textContent = (role === 'user' ? 'User: ' : role === 'assistant' ? 'AI: ' : '⚙️ ') + text;
+      finalsEl.appendChild(div); finalsEl.scrollTop = finalsEl.scrollHeight;
+    }
+
+    function renderHistory(history){
+      finalsEl.innerHTML = '';
+      history.forEach(item => {
+        const role = item.role === 'model' ? 'assistant' : (item.role || 'system');
+        const text = (item.parts && item.parts[0] && item.parts[0].text) ? item.parts[0].text : '';
+        appendBubble(role, text);
+      });
+    }
+
+    btnHistory.addEventListener('click', () => {
+      if(ws && ws.readyState === WebSocket.OPEN){ ws.send(JSON.stringify({ type: 'get_history' })); }
+    });
+
+    btnClear.addEventListener('click', () => {
+      finalsEl.innerHTML = ''; llmEl.textContent = ''; partialEl.textContent = '(cleared)';
+    });
+
+    // ---------------------------------------------
+    // Microphone capture → 16k PCM Int16 via AudioWorklet
+    // ---------------------------------------------
+    let mic = { ctx:null, source:null, node:null, stream:null };
+
+    btnStart.addEventListener('click', startMic);
+    btnStop.addEventListener('click', stopMic);
+
+    async function startMic(){
+      try{
+        if(!(ws && ws.readyState === WebSocket.OPEN)){ log('Connect first'); return; }
+
+        mic.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true } });
+        mic.ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Inject AudioWorklet processor from a Blob URL so we keep a single HTML file
+        const workletCode = `
+          class Pcm16Downsampler extends AudioWorkletProcessor {
+            constructor(){
+              super();
+              this.inRate = sampleRate; // context rate
+              this.outRate = 16000;
+              this._pos = 0;
+              this._ratio = this.inRate / this.outRate;
+            }
+            process(inputs){
+              const input = inputs[0];
+              if(!input || input.length===0) return true;
+              const ch0 = input[0];
+              const inLen = ch0.length;
+              if(inLen===0) return true;
+
+              // Estimate output samples count for this block
+              const outCount = Math.floor(inLen / this._ratio) || 0;
+              if(outCount <= 0){ return true; }
+              const out = new Int16Array(outCount);
+
+              let pos = 0;
+              for(let i=0;i<outCount;i++){
+                const idx = i * this._ratio;
+                const i0 = Math.floor(idx);
+                const i1 = Math.min(i0 + 1, inLen - 1);
+                const frac = idx - i0;
+                const s = ch0[i0] * (1 - frac) + ch0[i1] * frac; // simple linear
+                let v = Math.max(-1, Math.min(1, s));
+                out[i] = v < 0 ? v * 0x8000 : v * 0x7FFF;
+                pos++;
+              }
+
+              // Transfer to main thread
+              this.port.postMessage(out.buffer, [out.buffer]);
+              return true;
+            }
+          }
+          registerProcessor('pcm16-downsampler', Pcm16Downsampler);
+        `;
+        const blob = new Blob([workletCode], { type:'application/javascript' });
+        const url = URL.createObjectURL(blob);
+        await mic.ctx.audioWorklet.addModule(url);
+
+        mic.source = mic.ctx.createMediaStreamSource(mic.stream);
+        mic.node = new AudioWorkletNode(mic.ctx, 'pcm16-downsampler');
+
+        mic.node.port.onmessage = (e) => {
+          // e.data is an ArrayBuffer of Int16 PCM @16kHz
+          if(ws && ws.readyState === WebSocket.OPEN){ ws.send(e.data); }
+        };
+
+        mic.source.connect(mic.node);
+        // Do not connect to destination to avoid echo
+
+        btnStart.disabled = true; btnStop.disabled = false; btnConnect.disabled = true;
+        partialEl.textContent = '(listening…)';
+        log('Mic started (downsampling to 16k PCM Int16)');
+      }catch(err){ log('Mic error: ' + err.message); console.error(err); }
+    }
+
+    async function stopMic(){
+      try{
+        if(mic.node){ mic.node.disconnect(); mic.node.port.onmessage = null; }
+        if(mic.source){ mic.source.disconnect(); }
+        if(mic.ctx && mic.ctx.state !== 'closed'){ await mic.ctx.close(); }
+        if(mic.stream){ mic.stream.getTracks().forEach(t=>t.stop()); }
+      }catch(e){ /* ignore */ }
+      btnStart.disabled = false; btnStop.disabled = true; btnConnect.disabled = false;
+      partialEl.textContent = '(stopped)';
+      log('Mic stopped');
+    }
+
+    // ---------------------------------------------
+    // TTS Playback – queue base64 WAV (44100Hz mono Int16)
+    // ---------------------------------------------
+    class TTSPlayer {
+      constructor(){
+        this.ctx = null; this.queue = []; this.playing = false; this.total = 0;
+        this.sampleRate = 44100; // as configured in server for Murf
+      }
+      ensureContext(){
+        if(!this.ctx){ this.ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: this.sampleRate }); }
+      }
+      addChunk(base64){
+        this.ensureContext();
+        const float32 = this.base64WavToFloat32(base64);
+        if(!float32 || float32.length===0){ log('TTS: bad chunk'); return; }
+        const buf = this.ctx.createBuffer(1, float32.length, this.sampleRate);
+        buf.copyToChannel(float32, 0, 0);
+        this.queue.push(buf); this.total++;
+        ttsInfoEl.textContent = `Chunks: ${this.total} | Buffer: ${this.queue.length} | Playing: ${this.playing ? 'Yes':'No'}`;
+        if(!this.playing){ this.playNext(); }
+      }
+      playNext(){
+        if(this.queue.length===0){ this.playing = false; audioStatusEl.textContent = 'Ready'; return; }
+        this.playing = true; audioStatusEl.textContent = 'Playing…';
+        const buf = this.queue.shift();
+        const src = this.ctx.createBufferSource();
+        src.buffer = buf; src.connect(this.ctx.destination);
+        src.onended = () => { this.playNext(); };
+        src.start();
+        const played = (this.total - this.queue.length);
+        const pct = Math.min(100, Math.floor((played / Math.max(1,this.total)) * 100));
+        progEl.style.width = pct + '%';
+        ttsInfoEl.textContent = `Chunks: ${this.total} | Buffer: ${this.queue.length} | Playing: Yes`;
+      }
+      base64WavToFloat32(b64){
+        try{
+          const binary = atob(b64);
+          const bytes = new Uint8Array(binary.length);
+          for(let i=0;i<binary.length;i++){ bytes[i] = binary.charCodeAt(i); }
+          // detect simple WAV header (44 bytes) and skip
+          let offset = 0;
+          if(bytes.length>=44 && bytes[0]===0x52 && bytes[1]===0x49 && bytes[2]===0x46 && bytes[3]===0x46){ offset = 44; }
+          const pcm = bytes.slice(offset);
+          const dv = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+          const len = Math.floor(pcm.length / 2);
+          const out = new Float32Array(len);
+          for(let i=0;i<len;i++){
+            const v = dv.getInt16(i*2, true);
+            out[i] = Math.max(-1, Math.min(1, v / 32768));
+          }
+          return out;
+        }catch(e){ log('WAV decode error: ' + e.message); return null; }
+      }
+    }
+
+    const tts = new TTSPlayer();
+  </script>
+</body>
+</html>
