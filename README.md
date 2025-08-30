@@ -117,18 +117,6 @@ Modify these parameters in `server.py`:
 - "How's the temperature in New York right now?"
 - "Give me the weather forecast for London"
 
-### News Requests
-- "Get me the latest tech news"
-- "What are today's top headlines?"
-- "Show me 5 business news stories"
-
-### Available News Categories
-- `general` (default)
-- `technology`
-- `business` 
-- `sports`
-- `science`
-
 ## Project Structure
 
 ```
@@ -242,4 +230,3 @@ This project is licensed under the MIT License.
 - **Open-Meteo** for free weather data
 
 **Built with ❤️ for the AI Voice Agent community**
-
