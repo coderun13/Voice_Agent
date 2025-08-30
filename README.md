@@ -1,6 +1,4 @@
-# AI Voice Agent with Weather & News Skills
-
-> A real-time conversational AI assistant with voice interaction, weather reporting, and news updates - built for the "30 Days of AI Voice Agents" challenge (Day 27)
+# AI Voice Agent with Weather Skills
 
 ##  Project Overview
 
@@ -244,3 +242,4 @@ This project is licensed under the MIT License.
 - **Open-Meteo** for free weather data
 
 **Built with ❤️ for the AI Voice Agent community**
+
