@@ -1,6 +1,4 @@
-# AI Voice Agent with Weather & News Skills
-
-> A real-time conversational AI assistant with voice interaction, weather reporting, and news updates - built for the "30 Days of AI Voice Agents" challenge (Day 27)
+# AI Voice Agent with Weather Skills
 
 ##  Project Overview
 
@@ -118,18 +116,6 @@ Modify these parameters in `server.py`:
 - "What's the weather in Tokyo?"
 - "How's the temperature in New York right now?"
 - "Give me the weather forecast for London"
-
-### News Requests
-- "Get me the latest tech news"
-- "What are today's top headlines?"
-- "Show me 5 business news stories"
-
-### Available News Categories
-- `general` (default)
-- `technology`
-- `business` 
-- `sports`
-- `science`
 
 ## Project Structure
 
