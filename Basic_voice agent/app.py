@@ -34,7 +34,6 @@ aai.settings.api_key = ASSEMBLYAI_API_KEY
 # Initialize transcriber
 transcriber = aai.Transcriber()
 
-# ---------- DAY 10: Chat History Datastore ----------
 # Using a simple in-memory dictionary as the datastore for chat history
 # Format: { session_id: [ {"role": "user"/"assistant", "content": "..."} ] }
 chat_history = {}
@@ -124,7 +123,7 @@ async def tts_echo(file: UploadFile = File(...)):
             "api-key": f"{MURF_API_KEY}"
         }
         body = {
-            "voiceId": "en-UK-hazel",  # You can change this to any Murf voice ID
+            "voiceId": "en-UK-hazel",  # Can change this to any Murf voice ID
             "text": text
         }
         murf_response = requests.post(
@@ -153,7 +152,7 @@ async def tts_echo(file: UploadFile = File(...)):
 @app.post("/llm/query")
 async def llm_query(
     request: Request,
-    audio: UploadFile = File(None),  # Day 9: Audio input for voice pipeline
+    audio: UploadFile = File(None), # Day 9: Audio input for voice pipeline
     file: UploadFile = File(None),  # Backward compatibility
     text: str = Form(None)          # Day 8: Text input + Form data support
 ):
@@ -342,18 +341,17 @@ async def llm_query(
         print(f" Unexpected error: {e}")
         return JSONResponse(status_code=500, content={"error": f"Pipeline error: {str(e)}"})
 
-# -----------------------------------------------------------
+
 # ---------- DAY 10: Chat History with Audio Input ----------
-# -----------------------------------------------------------
 @app.post("/agent/chat/{session_id}")
 async def agent_chat(session_id: str, file: UploadFile = File(...)):
     try:
-        # 1️⃣ Save uploaded audio temporarily
+        #  Save uploaded audio temporarily
         temp_path = f"temp_{session_id}_{file.filename}"
         with open(temp_path, "wb") as f:
             f.write(await file.read())
 
-        # 2️⃣ Transcribe with AssemblyAI
+        #  Transcribe with AssemblyAI
         transcript = transcriber.transcribe(temp_path)
         os.remove(temp_path)
 
@@ -363,14 +361,14 @@ async def agent_chat(session_id: str, file: UploadFile = File(...)):
         user_text = transcript.text.strip()
         print(f"User transcription for session {session_id}: {user_text}")
 
-        # 3️⃣ Initialize chat history if new session
+        #  Initialize chat history if new session
         if session_id not in chat_history:
             chat_history[session_id] = []
 
-        # 4️⃣ Append user message to history
+        #  Append user message to history
         chat_history[session_id].append({"role": "user", "content": user_text})
 
-        # 5️⃣ Prepare full conversation for Gemini
+        #  Prepare full conversation for Gemini
         conversation_text = ""
         for msg in chat_history[session_id]:
             prefix = "User:" if msg["role"] == "user" else "Assistant:"
@@ -378,7 +376,7 @@ async def agent_chat(session_id: str, file: UploadFile = File(...)):
         
         print(f"Full prompt for LLM:\n{conversation_text}")
 
-        # 6️⃣ Send to Gemini API
+        #  Send to Gemini API
         if not GEMINI_API_KEY:
             return JSONResponse(status_code=500, content={"error": "GEMINI_API_KEY not set"})
         
@@ -407,10 +405,10 @@ async def agent_chat(session_id: str, file: UploadFile = File(...)):
 
         print(f"AI response: {ai_text}")
 
-        # 7️⃣ Append assistant's reply to history
+        #  Append assistant's reply to history
         chat_history[session_id].append({"role": "assistant", "content": ai_text})
 
-        # 8️⃣ Send AI text to Murf for TTS
+        #  Send AI text to Murf for TTS
         if not MURF_API_KEY:
             return JSONResponse(status_code=500, content={"error": "MURF_API_KEY not set"})
             
@@ -430,7 +428,7 @@ async def agent_chat(session_id: str, file: UploadFile = File(...)):
 
         audio_url = murf_response.json().get("audioFile")
 
-        # 9️⃣ Return the response with the audio URL
+        # Return the response with the audio URL
         return {
             "user_text": user_text,
             "ai_text": ai_text,
@@ -458,5 +456,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    # Make sure to run with a single worker process for the in-memory datastore to work
     uvicorn.run(app, host="0.0.0.0", port=8000, workers=1)
